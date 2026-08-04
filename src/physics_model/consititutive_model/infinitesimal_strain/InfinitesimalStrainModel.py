@@ -44,6 +44,10 @@ class InfinitesimalStrainModel(Solid):
         return 1. + dt[None] * (strain_rate[0] + strain_rate[1] + strain_rate[2])
 
     @ti.func
+    def update_particle_volume_bbar_2D(self, np, velocity_gradient, stateVars, dt):
+        return (ti.Matrix.identity(float, 2) + velocity_gradient * dt[None]).determinant()
+
+    @ti.func
     def ComputePKStress(self, np, previous_PKstress, velocity_gradient, stateVars, dt):  
         previous_cauchy_stress = self.PK2CauchyStress(np, previous_PKstress, stateVars)
         cauchy_stress = self.ComputeStress(np, previous_cauchy_stress, velocity_gradient, stateVars, dt)

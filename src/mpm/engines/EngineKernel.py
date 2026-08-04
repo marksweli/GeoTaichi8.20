@@ -1248,8 +1248,8 @@ def kernel_force_bbar_p2g_2D(total_nodes: int, particleNum: int, gravity: ti.typ
                 dshape_fnc = dshapefnc[ln]
                 temp_dshape = 0.5 * (dshape_fnc - dshape_fn)
                 external_force = shape_mapping(shapefn[ln], fex)
-                internal_force = vec2f([(dshape_fn[0] + temp_dshape[0]) * fInt[0] + temp_dshape[0] * fInt[1] + temp_dshape[0] * fInt[2] + dshape_fn[1] * fInt[3],
-                                        temp_dshape[1] * fInt[0] + (dshape_fn[1] + temp_dshape[1]) * fInt[1] + temp_dshape[1] * fInt[2] + dshape_fn[0] * fInt[3]])
+                internal_force = vec2f([(dshape_fn[0] + temp_dshape[0]) * fInt[0] + temp_dshape[0] * fInt[1] + dshape_fn[1] * fInt[3],
+                                        temp_dshape[1] * fInt[0] + (dshape_fn[1] + temp_dshape[1]) * fInt[1] + dshape_fn[0] * fInt[3]])
                 node[nodeID, bodyID]._update_nodal_force(external_force + internal_force)
 
 @ti.kernel
@@ -1744,14 +1744,13 @@ def kernel_update_velocity_gradient_2DAxisy(total_nodes: int, start_index: int, 
             particle[np].vol *= matProps.update_particle_volume(np, velocity_gradient, stateVars, dt)
 
 @ti.kernel
-def kernel_update_velocity_gradient_bbar_2D(total_nodes: int, start_index: int, end_index: int, dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template(), 
+def kernel_update_velocity_gradient_bbar_2D(total_nodes: int, start_index: int, end_index: int, dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template(),
                                      LnID: ti.template(), dshapefn: ti.template(), dshapefnc: ti.template(), node_size: ti.template()):
     for i in range(start_index, end_index):
         np = materialID[i]
         if int(particle[np].active) == 1:
             bodyID = int(particle[np].bodyID)
             velocity_gradient = ZEROMAT2x2
-            strain_rate_trace = ZEROVEC3f
             offset = np * total_nodes
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
@@ -1764,11 +1763,8 @@ def kernel_update_velocity_gradient_bbar_2D(total_nodes: int, start_index: int, 
                 velocity_gradient += outer_product2D(gv, dshape_fn)
                 velocity_gradient[0, 0] += average_bmatrix
                 velocity_gradient[1, 1] += average_bmatrix
-
-                strain_rate_trace[0] += dshape_fn[0] * gv[0]
-                strain_rate_trace[1] += dshape_fn[1] * gv[1]
             particle[np].velocity_gradient = truncation(velocity_gradient)
-            particle[np].vol *= matProps.update_particle_volume_bbar(np, strain_rate_trace, stateVars, dt)
+            particle[np].vol *= matProps.update_particle_volume_bbar_2D(np, velocity_gradient, stateVars, dt)
 
 @ti.kernel
 def kernel_update_velocity_gradient_bbar_2DAxisy(total_nodes: int, start_index: int, end_index: int, dt: ti.template(), node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(), stateVars: ti.template(), 

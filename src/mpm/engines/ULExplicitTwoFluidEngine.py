@@ -7,6 +7,8 @@ from src.mpm.Simulation import Simulation
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.utils.linalg import no_operation
 
+import taichi as ti
+
 
 class ULExplicitTwoFluidEngine(ULExplicitEngine):
     """Explicit updated-Lagrangian MPM solver of the Eulerian-Eulerian water-sediment model.
@@ -19,6 +21,8 @@ class ULExplicitTwoFluidEngine(ULExplicitEngine):
     def __init__(self, sims) -> None:
         super().__init__(sims)
         self.reset_grid_messages = self.reset_grid_message
+        # [0]: sediment mass created by the boundedness limiter, [1]: total sediment mass
+        self.sediment_correction = ti.field(float, shape=2)
 
     def manage_function(self, sims: Simulation):
         super().manage_function(sims)
@@ -33,6 +37,7 @@ class ULExplicitTwoFluidEngine(ULExplicitEngine):
 
     def reset_grid_message(self, scene: myScene):
         kernel_twofluid_grid_reset(scene.node)
+        kernel_twofluid_reset_correction(self.sediment_correction)
 
     def compute_nodal_kinematics(self, sims: Simulation, scene: myScene):
         kernel_twofluid_mass_momentum_p2g(scene.element.grid_nodes, int(scene.particleNum[0]), scene.node, scene.particle,
@@ -58,7 +63,14 @@ class ULExplicitTwoFluidEngine(ULExplicitEngine):
             end_index = scene.material.mapping[materialID + 1]
             kernel_twofluid_g2p(scene.element.grid_nodes, sims.alphaPIC, sims.dt, start_index, end_index, scene.node, scene.particle,
                                 scene.material.materialID, scene.material.matProps[materialID + 1], scene.material.stateVars,
-                                scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
+                                scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size,
+                                self.sediment_correction)
+        for materialID in range(scene.material.mapping.shape[0] - 1):
+            start_index = scene.material.mapping[materialID]
+            end_index = scene.material.mapping[materialID + 1]
+            kernel_twofluid_conservative_clip(start_index, end_index, scene.particle, scene.material.materialID,
+                                              scene.material.matProps[materialID + 1], scene.material.stateVars,
+                                              self.sediment_correction)
 
     def usl_updating(self, sims: Simulation, scene: myScene, neighbor=None):
         self.calculate_interpolation(sims, scene)

@@ -335,7 +335,6 @@ class ParticleTwoFluid2D:
     afrf: float                     # alpha_f * rho_f, Eq. (4.66)
     alpha_s: float                  # sediment volumetric concentration
     pressure: float                 # mixture pressure, Eq. (4.77)
-    div_flux: float                 # div[alpha_s (u_s - u_f)], Eq. (4.67)
     x: vec2f
     v: vec2f                        # water velocity u_f
     vs: vec2f                       # sediment velocity u_s

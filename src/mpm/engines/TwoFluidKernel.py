@@ -43,7 +43,6 @@ def kernel_twofluid_mass_momentum_p2g(total_nodes: int, particleNum: int, node: 
             velocity_s = particle[np].vs
             pressure = particle[np].pressure
             alpha_s = particle[np].alpha_s
-            drift = alpha_s * (velocity_s - velocity) if alpha_s > TRACE_CONCENTRATION else ZEROVEC2f
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 shape_fn = shapefn[ln]
@@ -57,7 +56,6 @@ def kernel_twofluid_mass_momentum_p2g(total_nodes: int, particleNum: int, node: 
                 node[nodeID, bodyID].vol += nvol
                 node[nodeID, bodyID].pressure += nvol * pressure
                 node[nodeID, bodyID].alpha_s += nvol * alpha_s
-                node[nodeID, bodyID].flux += nvol * drift
 
 
 @ti.kernel
@@ -67,14 +65,12 @@ def kernel_twofluid_grid_velocity(cutoff: float, node: ti.template()):
             node[ng, nb].momentum /= node[ng, nb].m
             node[ng, nb].pressure /= node[ng, nb].vol
             node[ng, nb].alpha_s /= node[ng, nb].vol
-            node[ng, nb].flux /= node[ng, nb].vol
             # the sediment velocity is only meaningful where sediment is actually
             # present; elsewhere it is slaved to the water to avoid amplifying noise
             if node[ng, nb].ms > cutoff and node[ng, nb].alpha_s > TRACE_CONCENTRATION:
                 node[ng, nb].momentums /= node[ng, nb].ms
             else:
                 node[ng, nb].momentums = node[ng, nb].momentum
-                node[ng, nb].flux = ZEROVEC2f
 
 
 # ========================================================= #
@@ -93,13 +89,10 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
 
             # ---- gather the nodal fields required by Eqs. (4.65)-(4.68) ----
             grad_alpha = ZEROVEC2f
-            divergence_flux = 0.
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 dshape_fn = dshapefn[ln]
                 grad_alpha += node[nodeID, bodyID].alpha_s * dshape_fn
-                divergence_flux += node[nodeID, bodyID].flux.dot(dshape_fn)
-            particle[np].div_flux = divergence_flux
             velocity_gradient = particle[np].velocity_gradient
             sediment_gradient = particle[np].sediment_velocity_gradient
 
@@ -139,6 +132,10 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
 
             water_body = particle[np].m * gravity2D + volume * exchange - interfacial
             sediment_body = particle[np].ms * gravity2D - volume * exchange + interfacial
+            # Eq. (4.67): weak form of the drift flux alpha_s rho_s (u_s - u_f).  Assembling the
+            # sediment mass rate on the grid and redistributing it with the same weights makes the
+            # concentration transport discretely conservative, because sum_I grad(N_I) vanishes.
+            sediment_flux = -volume * asrs * relative_velocity
 
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
@@ -152,6 +149,7 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
                           sediment_traction[1, 0] * dshape_fn[0] + sediment_traction[1, 1] * dshape_fn[1])
                 node[nodeID, bodyID].force += water_force
                 node[nodeID, bodyID].forces += sediment_force
+                node[nodeID, bodyID].dms += sediment_flux.dot(dshape_fn)
 
 
 @ti.kernel
@@ -176,7 +174,8 @@ def kernel_twofluid_grid_kinematic(cutoff: float, damp: float, node: ti.template
 @ti.kernel
 def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start_index: int, end_index: int,
                         node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(),
-                        stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(), node_size: ti.template()):
+                        stateVars: ti.template(), LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(),
+                        node_size: ti.template(), correction: ti.template()):
     for i in range(start_index, end_index):
         np = materialID[i]
         if int(particle[np].active) == 1:
@@ -188,6 +187,7 @@ def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start
             # that velocity and density are advanced in a staggered (symplectic) manner
             velocity_gradient = ZEROMAT2x2
             sediment_gradient = ZEROMAT2x2
+            sediment_mass_rate = 0.
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 shape_fn = shapefn[ln]
@@ -200,6 +200,8 @@ def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start
                 aFLIPs += shape_fn * node[nodeID, bodyID].forces
                 velocity_gradient += _outer2D(gv, dshape_fn)
                 sediment_gradient += _outer2D(gvs, dshape_fn)
+                if node[nodeID, bodyID].vol > 0.:
+                    sediment_mass_rate += shape_fn * node[nodeID, bodyID].dms / node[nodeID, bodyID].vol
             particle[np].velocity_gradient = velocity_gradient
             particle[np].sediment_velocity_gradient = sediment_gradient
 
@@ -213,18 +215,30 @@ def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start
             particle[np].vs = alpha * vPICs + (1. - alpha) * (sediment_velocity + aFLIPs * dt[None]) - advection * dt[None]
 
             # Eqs. (4.66)-(4.67): mass conservation of both phases.  Equation (4.67) is
-            # recast in the Lagrangian form that follows the water:
-            #   D(alpha_s)/Dt = -alpha_s div(u_s) - (u_s - u_f) . grad(alpha_s)
+            # integrated in its conservative form, D(m_s)/Dt = -V div[alpha_s rho_s (u_s - u_f)],
+            # with the divergence assembled on the grid, so that the total sediment mass is
+            # conserved to machine precision as long as no bound has to be enforced.
             divergence = velocity_gradient.trace()
             jacobian = 1. + divergence * dt[None]
+            # the mass increment is weighted with the volume used in the particle-to-grid
+            # assembly, which is what makes the redistribution exactly conservative
+            sediment_mass = particle[np].ms + particle[np].vol * sediment_mass_rate * dt[None]
             particle[np].vol *= jacobian
             particle[np].afrf /= jacobian
-            alpha_s = particle[np].alpha_s / jacobian - particle[np].div_flux * dt[None]
+            volume = particle[np].vol
             # a vanishingly small background concentration keeps the sediment velocity
             # field (and therefore the concentration front) well defined in clear water
-            alpha_s = ti.min(ti.max(alpha_s, matProps.background_concentration), MAX_PACKING_FRACTION * matProps.max_concentration)
+            minimum_mass = matProps.background_concentration * matProps.solid_density * volume
+            maximum_mass = MAX_PACKING_FRACTION * matProps.max_concentration * matProps.solid_density * volume
+            bounded_mass = ti.min(ti.max(sediment_mass, minimum_mass), maximum_mass)
+            # the mass artificially created (or destroyed) by enforcing the bounds is
+            # book-kept and removed afterwards, see kernel_twofluid_conservative_clip
+            correction[0] += bounded_mass - sediment_mass
+            correction[1] += bounded_mass
+            sediment_mass = bounded_mass
+            alpha_s = sediment_mass / (matProps.solid_density * volume)
             particle[np].alpha_s = alpha_s
-            particle[np].ms = alpha_s * matProps.solid_density * particle[np].vol
+            particle[np].ms = sediment_mass
             if alpha_s < TRACE_CONCENTRATION:
                 particle[np].vs = particle[np].v
             particle[np].pressure = matProps._pressure(particle[np].afrf, alpha_s)
@@ -250,3 +264,39 @@ def kernel_twofluid_hydrostatic_state(start_index: int, end_index: int, particle
                 particle[np].pressure = matProps._pressure(particle[np].afrf, particle[np].alpha_s)
             stateVars[np].pressure = particle[np].pressure
             stateVars[np].concentration = particle[np].alpha_s
+
+
+# ========================================================= #
+#                  Conservative clipping                    #
+# ========================================================= #
+@ti.kernel
+def kernel_twofluid_reset_correction(correction: ti.template()):
+    correction[0] = 0.
+    correction[1] = 0.
+
+
+@ti.kernel
+def kernel_twofluid_conservative_clip(start_index: int, end_index: int, particle: ti.template(), materialID: ti.template(),
+                                      matProps: ti.template(), stateVars: ti.template(), correction: ti.template()):
+    """Remove the sediment mass created by the boundedness limiter.
+
+    Clipping the concentration to [alpha_bg, alpha_max] is unavoidable with an explicit
+    advection scheme, but it is not conservative.  The spurious mass is redistributed over
+    all sediment-carrying material points in proportion to their own mass, which restores
+    global conservation without altering the shape of the concentration field.
+    """
+    scale = 1.
+    if correction[1] > 0.:
+        scale = (correction[1] - correction[0]) / correction[1]
+    for i in range(start_index, end_index):
+        np = materialID[i]
+        if int(particle[np].active) == 1:
+            sediment_mass = particle[np].ms * scale
+            alpha_s = sediment_mass / (matProps.solid_density * particle[np].vol)
+            particle[np].ms = sediment_mass
+            particle[np].alpha_s = alpha_s
+            if alpha_s < TRACE_CONCENTRATION:
+                particle[np].vs = particle[np].v
+            particle[np].pressure = matProps._pressure(particle[np].afrf, alpha_s)
+            stateVars[np].pressure = particle[np].pressure
+            stateVars[np].concentration = alpha_s

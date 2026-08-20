@@ -67,33 +67,38 @@ def main():
     mpm.select_save_data(particle=['MaterialID', 'Velocity'])
     mpm.run(gravity_field=True)
 
+    # ---- post-processing following Shi Huabin, section 5.3 -------------------
+    # Z  : drop distance of the cloud centre (sediment-mass weighted centroid)
+    # w_c: sinking velocity of the cloud centre, normalised by omega_s
+    # B  : cloud width, bounded by the points where alpha_s = 0.1 alpha_s^max
+    omega_s = 0.1545
+    L0 = np.sqrt(5e-4)
     fs = sorted(glob.glob('mud_twofluid_08C1/particles/MPMParticle*'))
     print(f'Frames:{len(fs)}')
-    for f in fs[::8]:
+    history = []
+    for f in fs:
         d = np.load(f, allow_pickle=True)
-        tc = float(d['t_current'])
-        ok = not np.any(np.isnan(d['position']))
-        ms = d['sediment_mass']
-        conc = d['concentration']
-        total_ms = float(ms.sum())
-        sed = conc > 0.001
-        if ms.sum() > 0:
-            my = float((ms * d['position'][:, 1]).sum() / ms.sum())
-            xc = float((ms * d['position'][:, 0]).sum() / ms.sum())
-            width = float(np.sqrt((ms * (d['position'][:, 0] - xc) ** 2).sum() / ms.sum()))
-        else:
-            my = xc = width = 0.0
-        surf = float(d['position'][:, 1].max())
-        print(f't={tc:.3f} ok={ok} mud_y={my:.4f} surf={surf:.4f} width={width:.4f} ms_tot={total_ms:.4e} sed_n={int(sed.sum())}')
-    if len(fs) > 1:
-        d0 = np.load(fs[0], allow_pickle=True); d1 = np.load(fs[-1], allow_pickle=True)
-        m0 = d0['sediment_mass']; m1 = d1['sediment_mass']
-        if m0.sum() > 0 and m1.sum() > 0:
-            y0 = float((m0 * d0['position'][:, 1]).sum() / m0.sum())
-            y1 = float((m1 * d1['position'][:, 1]).sum() / m1.sum())
-            ws = (y0 - y1) / float(d1['t_current'])
-            print(f'w_s={ws:.4f} m/s (target 0.1545)')
-            print(f'sediment mass conservation: {m0.sum():.4e} -> {m1.sum():.4e} (rel err {(m0.sum()-m1.sum())/m0.sum():.2e})')
+        t = float(d['t_current'])
+        ms = d['sediment_mass']; conc = d['concentration']; pos = d['position']
+        total = float(ms.sum())
+        if total <= 0.:
+            continue
+        yc = float((ms * pos[:, 1]).sum() / total)
+        cloud = conc >= 0.1 * conc.max()
+        width = float(pos[cloud, 0].max() - pos[cloud, 0].min()) if cloud.any() else 0.
+        history.append((t, yc, width, total, float(conc.max()), bool(np.isnan(pos).any())))
+    y0 = history[0][1]
+    print(' t[s]    Z/L0    w_c/omega_s   B/L0   alpha_s^max   m_s error')
+    for i, (t, yc, width, total, cmax, nan) in enumerate(history):
+        if nan:
+            print(f'{t:6.3f}  diverged'); break
+        w = 0.
+        if 0 < i < len(history) - 1:
+            w = (history[i - 1][1] - history[i + 1][1]) / (history[i + 1][0] - history[i - 1][0])
+        elif i > 0:
+            w = (history[i - 1][1] - yc) / (t - history[i - 1][0])
+        print(f'{t:6.3f} {(y0 - yc) / L0:7.2f} {w / omega_s:12.3f} {width / L0:7.2f} {cmax:12.4f}'
+              f' {(total - history[0][3]) / history[0][3]:11.2e}')
 
 if __name__ == '__main__':
     main()

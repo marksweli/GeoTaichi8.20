@@ -720,6 +720,116 @@ class Nodes2D:
         pass
 
 @ti.dataclass
+class TwoFluidNodes2D:
+    """Background grid node carrying the two momentum fields of the two-fluid model."""
+    m: float                # water mass
+    force: vec2f            # water force, replaced by the water acceleration
+    momentum: vec2f         # water momentum, replaced by the water velocity
+    ms: float               # sediment mass
+    forces: vec2f           # sediment force, replaced by the sediment acceleration
+    momentums: vec2f        # sediment momentum, replaced by the sediment velocity
+    vol: float
+    pressure: float
+    alpha_s: float
+    flux: vec2f             # alpha_s (u_s - u_f), drift flux of Eq. (4.67)
+
+    @ti.func
+    def _tlgrid_reset(self):
+        self.momentum = ZEROVEC2f
+        self.force = ZEROVEC2f
+        self.momentums = ZEROVEC2f
+        self.forces = ZEROVEC2f
+
+    @ti.func
+    def _grid_reset(self):
+        self.m = 0.
+        self.momentum = ZEROVEC2f
+        self.force = ZEROVEC2f
+        self.ms = 0.
+        self.momentums = ZEROVEC2f
+        self.forces = ZEROVEC2f
+        self.vol = 0.
+        self.pressure = 0.
+        self.alpha_s = 0.
+        self.flux = ZEROVEC2f
+
+    @ti.func
+    def _update_nodal_mass(self, m):
+        self.m += m
+
+    @ti.func
+    def _update_nodal_momentum(self, momentum):
+        self.momentum += momentum
+
+    @ti.func
+    def _compute_nodal_velocity(self):
+        self.momentum /= self.m
+
+    @ti.func
+    def _update_nodal_force(self, force):
+        self.force += force
+
+    @ti.func
+    def _update_external_force(self, external_force):
+        self.force += external_force
+
+    @ti.func
+    def _update_internal_force(self, internal_force):
+        self.force += internal_force
+
+    @ti.func
+    def _compute_nodal_kinematic(self, damp, dt):
+        acceleration = self.force / self.m
+        self.momentum += acceleration * dt[None]
+        self.force = acceleration
+
+    @ti.func
+    def _update_nodal_kinematic(self):
+        self.force /= self.m
+        self.momentum /= self.m
+
+    @ti.func
+    def contact_velocity_constraint(self, dirs):
+        pass
+
+    @ti.func
+    def contact_reflection_constraint(self, dirs, signs):
+        pass
+
+    @ti.func
+    def velocity_constraint(self, dirs, prescribed_velocity):
+        self.momentum[dirs] = prescribed_velocity
+        self.force[dirs] = 0.
+        self.momentums[dirs] = prescribed_velocity
+        self.forces[dirs] = 0.
+
+    @ti.func
+    def rigid_body_velocity_constraint(self, dirs):
+        pass
+
+    @ti.func
+    def reflection_constraint(self, dirs, signs):
+        if self.momentum[dirs] * signs > 0:
+            self.momentum[dirs] = 0.
+            self.force[dirs] = 0.
+        if self.momentums[dirs] * signs > 0:
+            self.momentums[dirs] = 0.
+            self.forces[dirs] = 0.
+
+    @ti.func
+    def rigid_body_reflection_constraint(self, dirs, signs):
+        pass
+
+    @ti.func
+    def friction_constraint(self, mu, dirs_n, signs, dt):
+        pass
+
+    @ti.func
+    def rigid_friction_constraint(self, dirs, signs):
+        pass
+
+
+@ti.dataclass
 class IncompressibleNodes2D:
     m: float
     force: vec2f

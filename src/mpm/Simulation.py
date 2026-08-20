@@ -198,7 +198,7 @@ class Simulation(object):
         self.configuration = configuration
 
     def set_material_type(self, material_type):
-        valid_list = ["Solid", "Fluid", "TwoPhaseSingleLayer", "TwoPhaseDoubleLayer"]
+        valid_list = ["Solid", "Fluid", "TwoPhaseSingleLayer", "TwoPhaseDoubleLayer", "TwoFluidSediment"]
         if not material_type in valid_list:
             raise RuntimeError(f"Keyword:: /material_type/ error. Only {valid_list} is valid!")
         self.material_type = material_type

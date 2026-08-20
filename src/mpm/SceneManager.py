@@ -70,6 +70,8 @@ class myScene(object):
                     if not sims.is_2DAxisy:
                         if sims.material_type == "TwoPhaseSingleLayer":
                             ptemp = ParticleCloudTwoPhase2D
+                        elif sims.material_type == "TwoFluidSediment":
+                            ptemp = ParticleTwoFluid2D
                         else:
                             ptemp = ParticleCloud2D
                     elif sims.is_2DAxisy:
@@ -214,6 +216,8 @@ class myScene(object):
                         gtemp = Nodes2D
                     elif sims.material_type == "TwoPhaseSingleLayer":
                         gtemp = NodeTwoPhase2D
+                    elif sims.material_type == "TwoFluidSediment":
+                        gtemp = TwoFluidNodes2D
                     elif sims.material_type == "TwoPhaseDoubleLayer":
                         raise RuntimeError()
                 elif sims.dimension == 3:
@@ -416,6 +420,10 @@ class myScene(object):
                 modify_particle_velocity_in_region_2D(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "stress":
             modify_particle_stress_in_region(factor, value, int(self.particleNum[0]), self.particle, is_in_region)
+        elif property_name == "concentration":
+            reference = self.material.matProps[1]
+            modify_particle_concentration_in_region(max(float(value), reference.background_concentration), reference.density, reference.solid_density,
+                                                    int(self.particleNum[0]), self.particle, is_in_region)
         elif property_name == "fix_velocity":
             FIX = {
                     "Free": 0,
@@ -424,7 +432,7 @@ class myScene(object):
             fix_v = vec3u8([DictIO.GetEssential(FIX, is_fix) for is_fix in value])
             modify_particle_fix_v_in_region(fix_v, int(self.particleNum[0]), self.particle, is_in_region)
         else:
-            valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity"]
+            valid_list = ["bodyID", "materialID", "position", "velocity", "traction", "stress", "fix_velocity", "concentration"]
             raise KeyError(f"Invalid property_name: {property_name}! Only the following keywords is valid: {valid_list}")
         
     def update_particle_properties(self, sims: Simulation, override, property_name, value, bodyID):

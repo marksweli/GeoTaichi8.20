@@ -189,6 +189,9 @@ class BodyGenerator(Generator):
                     densityf = material.matProps[materialID].fluid_density
                     porosity = material.matProps[materialID].porosity
                     permeability = material.matProps[materialID].permeability
+                if self.sims.material_type == "TwoFluidSediment":
+                    solid_density = material.matProps[materialID].solid_density
+                    concentration = max(DictIO.GetAlternative(template, "Concentration", material.matProps[materialID].concentration), material.matProps[materialID].background_concentration)
                 if materialID <= 0:
                     raise RuntimeError(f"Material ID {materialID} should be larger than 0")
                 
@@ -216,6 +219,8 @@ class BodyGenerator(Generator):
                     kernel_add_body_2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, init_v, fix_v)
                 elif self.sims.material_type == 'TwoPhaseSingleLayer':
                     kernel_add_body_twophase2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, densityf, porosity, permeability, init_v, fix_v)
+                elif self.sims.material_type == 'TwoFluidSediment':
+                    kernel_add_body_twofluid2D(particles, particleNum, start_particle_num, end_particle_num, self.particle, particle_volume, bodyID, materialID, density, solid_density, concentration, init_v, fix_v)
             self.set_particle_stress(scene, particleNum, particle_count, particle_stress)
             scene.push_psize(np.repeat([psize], particle_count, axis=0))
             traction = DictIO.GetAlternative(template, "Traction", {})

@@ -40,6 +40,8 @@ class WriteFile:
             else:
                 if sims.material_type == "TwoPhaseSingleLayer":
                     self.save_particle = self.MonitorParticleTwoPhase
+                elif sims.material_type == "TwoFluidSediment":
+                    self.save_particle = self.MonitorParticleTwoFluid
                 else:
                     if "Implicit" in sims.solver_type:
                         if sims.material_type == "Fluid" or sims.material_type == "TwoPhaseDoubleLayer":
@@ -185,6 +187,29 @@ class WriteFile:
                                                                              bodyID=bodyID, materialID=materialID, active=active, mass=mass, volume=volume, position=position, velocity=velocity, 
                                                                              stress=stress, solid_velocity_gradient=solid_velocity_gradient, fluid_velocity_gradient=fluid_velocity_gradient, fix_v=fix_v, state_vars=state_vars, 
                                                                              solid_velocity=solid_velocity, fluid_velocity=fluid_velocity, solid_mass=solid_mass, fluid_mass=fluid_mass, pressure=pressure, permeability=permeability, porosity=porosity)
+
+    def MonitorParticleTwoFluid(self, sims: Simulation, scene: myScene):
+        particle_num = int(scene.particleNum[0])
+        position = scene.particle.x.to_numpy()[0:particle_num]
+        bodyID = scene.particle.bodyID.to_numpy()[0:particle_num]
+        materialID = scene.particle.materialID.to_numpy()[0:particle_num]
+        active = scene.particle.active.to_numpy()[0:particle_num]
+        velocity = scene.particle.v.to_numpy()[0:particle_num]
+        sediment_velocity = scene.particle.vs.to_numpy()[0:particle_num]
+        mass = scene.particle.m.to_numpy()[0:particle_num]
+        sediment_mass = scene.particle.ms.to_numpy()[0:particle_num]
+        volume = scene.particle.vol.to_numpy()[0:particle_num]
+        concentration = scene.particle.alpha_s.to_numpy()[0:particle_num]
+        water_density = scene.particle.afrf.to_numpy()[0:particle_num]
+        pressure = scene.particle.pressure.to_numpy()[0:particle_num]
+        velocity_gradient = scene.particle.velocity_gradient.to_numpy()[0:particle_num]
+        fix_v = scene.particle.fix_v.to_numpy()[0:particle_num]
+        state_vars = {"pressure": pressure, "concentration": concentration}
+        self.visualizeParticle(sims, position, velocity, volume, state_vars)
+        np.savez(self.particle_path+f'/MPMParticle{sims.current_print:06d}', t_current=sims.current_time, body_num=particle_num,
+                 bodyID=bodyID, materialID=materialID, active=active, mass=mass, volume=volume, position=position, velocity=velocity,
+                 sediment_velocity=sediment_velocity, sediment_mass=sediment_mass, concentration=concentration,
+                 water_density=water_density, pressure=pressure, velocity_gradient=velocity_gradient, fix_v=fix_v, state_vars=state_vars)
 
     def MonitorIncompressibleParticleCoupling(self, sims: Simulation, scene: myScene):
         particle_num = scene.particleNum[0]

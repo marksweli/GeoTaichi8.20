@@ -121,6 +121,16 @@ class MaterialHandle(ConstitutiveBase):
                 return UserDefined(material_type=sims.material_type, configuration=self.get_unified_configuration(sims.configuration), solver_type=sims.solver_type)
             else:
                 raise ValueError(f'Constitutive Model: {constitutive_model} error! Only the following is aviliable:\n{model_type}')
+        elif sims.material_type == "TwoFluidSediment":
+            if sims.configuration == "TLMPM" or sims.solver_type == "Implicit":
+                raise RuntimeError("Only /Explicit/ /ULMPM/ supports the two-fluid sediment model")
+
+            model_type = ["TwoFluidSediment"]
+            if constitutive_model == "TwoFluidSediment":
+                from src.physics_model.consititutive_model.strain_rate.TwoFluidSediment import TwoFluidSedimentModel
+                return TwoFluidSedimentModel(material_type=sims.material_type, configuration=self.get_unified_configuration(sims.configuration), solver_type=sims.solver_type)
+            else:
+                raise ValueError(f'Constitutive Model: {constitutive_model} error! Only the following is aviliable:\n{model_type}')
         elif sims.material_type == "Fluid":
             if sims.configuration =="TLMPM":
                 raise RuntimeError("Only /Explicit/ /ULMPM/ supports fluid model")

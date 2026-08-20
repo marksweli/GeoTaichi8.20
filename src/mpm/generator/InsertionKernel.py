@@ -150,6 +150,14 @@ def kernel_add_body_twophase2D(particles: ti.template(), init_particleNum: int, 
         particles[particleNum]._set_essential(particleNum, bodyID, materialID, densitys[np], densityf, porosity, particle_volume, particle[particleID], init_v, fix_v, permeability)
 
 @ti.kernel
+def kernel_add_body_twofluid2D(particles: ti.template(), init_particleNum: int, start_particle_num: int, end_particle_num: int, particle: ti.template(),
+                     particle_volume: float, bodyID: int, materialID: int, densityf: ti.types.ndarray(), densitys: float, concentration: float, init_v: ti.types.vector(2, float), fix_v: ti.types.vector(2, ti.u8)):
+    for np in range(end_particle_num - start_particle_num):
+        particleID = start_particle_num + np
+        particleNum = init_particleNum + np
+        particles[particleNum]._set_essential(particleNum, bodyID, materialID, densityf[np], densitys, concentration, particle_volume, particle[particleID], init_v, fix_v)
+
+@ti.kernel
 def kernel_read_particle_file_(particles: ti.template(), particleNum: int, particle_num: int, particle: ti.types.ndarray(), particle_volume: ti.types.ndarray(), 
                                bodyID: int, materialID: int, density: ti.types.ndarray(), init_v: ti.types.vector(3, float), fix_v: ti.types.vector(3, int)):
     for np in range(particle_num):

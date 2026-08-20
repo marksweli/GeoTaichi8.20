@@ -30,10 +30,14 @@ def main():
     mud_width = 8 * dx; mud_height = 10 * dx
     mx0 = 0.5 - 0.5 * mud_width; my0 = H - mud_height
 
-    mpm.set_configuration(domain=[H, 1.1 * H], background_damping=0.0, alphaPIC=0.85,
+    mpm.set_configuration(domain=[H, 1.1 * H], background_damping=0.0, alphaPIC=0.03,
         mapping='USL', shape_function='QuadBSpline', gravity=[0., -G],
-        material_type='TwoFluidSediment', velocity_projection='PIC')
-    mpm.set_solver({'Timestep': 2.5e-5, 'SimulationTime': 1.0, 'SaveInterval': 0.05,
+        material_type='TwoFluidSediment', velocity_projection='PIC/FLIP')
+    # A FLIP dominated projection is mandatory here: with pure PIC the numerical dissipation of
+    # the grid transfer removes the slip between the two phases and the cloud stops settling.
+    # The time step is limited by the sediment viscosity of Eq. (4.32), which at alpha_s = 0.606
+    # is already of the order of 1 m^2/s, so that dt <~ 0.125 h^2 / nu_s.
+    mpm.set_solver({'Timestep': 4e-6, 'SimulationTime': 1.0, 'SaveInterval': 0.02,
                     'SavePath': 'mud_twofluid_08C1'})
     mpm.memory_allocate(memory={'max_material_number': 2, 'max_particle_number': 400000,
         'verlet_distance_multiplier': 1., 'max_constraint_number': {'max_reflection_constraint': 400000}})

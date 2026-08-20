@@ -123,15 +123,16 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
 
             water_traction = -volume * afrf * water_stress
             sediment_traction = -volume * asrs * sediment_stress
-            # weak form of -grad(alpha_k * p): f_I = + sum_p V_p (alpha_k p)_p grad(N_I)
-            water_pressure = volume * alpha_f * pressure
-            sediment_pressure = volume * alpha_s * pressure
-            # the interfacial pressure p * grad(alpha_k) is transferred between the phases so
-            # that their sum reproduces the mixture pressure gradient exactly
-            interfacial = volume * pressure * grad_alpha
+            # The pressure force of the mixture is assembled in the weak form
+            # f_I = + sum_p V_p p_p grad(N_I) and is shared by the two phases in proportion to
+            # their nodal volume fractions, see kernel_twofluid_grid_kinematic.  Splitting the
+            # already assembled mixture force avoids evaluating the two large and almost
+            # cancelling contributions -grad(alpha_k p) and p grad(alpha_k) separately, which
+            # near a sharp concentration front produces spurious forces of the order of p/Delta.
+            mixture_pressure = volume * pressure
 
-            water_body = particle[np].m * gravity2D + volume * exchange - interfacial
-            sediment_body = particle[np].ms * gravity2D - volume * exchange + interfacial
+            water_body = particle[np].m * gravity2D + volume * exchange
+            sediment_body = particle[np].ms * gravity2D - volume * exchange
             # Eq. (4.67): weak form of the drift flux alpha_s rho_s (u_s - u_f).  Assembling the
             # sediment mass rate on the grid and redistributing it with the same weights makes the
             # concentration transport discretely conservative, because sum_I grad(N_I) vanishes.
@@ -141,14 +142,15 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
                 nodeID = LnID[ln]
                 shape_fn = shapefn[ln]
                 dshape_fn = dshapefn[ln]
-                water_force = shape_fn * water_body + water_pressure * dshape_fn + \
+                water_force = shape_fn * water_body + \
                     vec2f(water_traction[0, 0] * dshape_fn[0] + water_traction[0, 1] * dshape_fn[1],
                           water_traction[1, 0] * dshape_fn[0] + water_traction[1, 1] * dshape_fn[1])
-                sediment_force = shape_fn * sediment_body + sediment_pressure * dshape_fn + \
+                sediment_force = shape_fn * sediment_body + \
                     vec2f(sediment_traction[0, 0] * dshape_fn[0] + sediment_traction[0, 1] * dshape_fn[1],
                           sediment_traction[1, 0] * dshape_fn[0] + sediment_traction[1, 1] * dshape_fn[1])
                 node[nodeID, bodyID].force += water_force
                 node[nodeID, bodyID].forces += sediment_force
+                node[nodeID, bodyID].pforce += mixture_pressure * dshape_fn
                 node[nodeID, bodyID].dms += sediment_flux.dot(dshape_fn)
 
 
@@ -156,6 +158,9 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
 def kernel_twofluid_grid_kinematic(cutoff: float, damp: float, node: ti.template(), dt: ti.template()):
     for ng, nb in node:
         if node[ng, nb].m > cutoff:
+            concentration = ti.min(ti.max(node[ng, nb].alpha_s, 0.), 1.)
+            node[ng, nb].force += (1. - concentration) * node[ng, nb].pforce
+            node[ng, nb].forces += concentration * node[ng, nb].pforce
             acceleration = node[ng, nb].force / node[ng, nb].m
             node[ng, nb].momentum += acceleration * dt[None]
             node[ng, nb].force = acceleration
@@ -188,6 +193,11 @@ def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start
             velocity_gradient = ZEROMAT2x2
             sediment_gradient = ZEROMAT2x2
             sediment_mass_rate = 0.
+            # the sediment phase only exists where sediment is present; its velocity gradient is
+            # therefore evaluated from the sediment-carrying nodes alone and relative to the
+            # particle velocity, so that clear water does not act as an artificial rigid support
+            # for the cloud through the (very large) Ahilan-Sleath viscosity
+            sediment_velocity = particle[np].vs
             for ln in range(offset, offset + int(node_size[np])):
                 nodeID = LnID[ln]
                 shape_fn = shapefn[ln]
@@ -199,14 +209,14 @@ def kernel_twofluid_g2p(total_nodes: int, alpha: float, dt: ti.template(), start
                 vPICs += shape_fn * gvs
                 aFLIPs += shape_fn * node[nodeID, bodyID].forces
                 velocity_gradient += _outer2D(gv, dshape_fn)
-                sediment_gradient += _outer2D(gvs, dshape_fn)
+                if node[nodeID, bodyID].alpha_s > TRACE_CONCENTRATION:
+                    sediment_gradient += _outer2D(gvs - sediment_velocity, dshape_fn)
                 if node[nodeID, bodyID].vol > 0.:
                     sediment_mass_rate += shape_fn * node[nodeID, bodyID].dms / node[nodeID, bodyID].vol
             particle[np].velocity_gradient = velocity_gradient
             particle[np].sediment_velocity_gradient = sediment_gradient
 
             water_velocity = particle[np].v
-            sediment_velocity = particle[np].vs
             particle[np]._update_particle_state(dt, alpha, vPIC, aFLIP)
             # Eq. (4.68): the material points travel with the water, hence the sediment
             # momentum equation retains the relative advection term

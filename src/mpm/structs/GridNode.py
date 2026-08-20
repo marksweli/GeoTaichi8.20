@@ -732,6 +732,7 @@ class TwoFluidNodes2D:
     pressure: float
     alpha_s: float
     flux: vec2f             # alpha_s (u_s - u_f), drift flux of Eq. (4.67)
+    pforce: vec2f           # mixture pressure force, split between the phases with the nodal alpha_s
     dms: float              # nodal sediment mass rate, weak form of -div[alpha_s rho_s (u_s - u_f)]
 
     @ti.func
@@ -753,6 +754,7 @@ class TwoFluidNodes2D:
         self.pressure = 0.
         self.alpha_s = 0.
         self.flux = ZEROVEC2f
+        self.pforce = ZEROVEC2f
         self.dms = 0.
 
     @ti.func

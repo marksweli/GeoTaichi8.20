@@ -316,6 +316,115 @@ class ParticleCloudTwoPhase2D:      # memory usage: 108B
     
 
 @ti.dataclass
+class ParticleTwoFluid2D:
+    """Material point of the Eulerian-Eulerian water-sediment (two fluid) model.
+
+    Following Shi Huabin (Chapter 4), one single set of material points describes
+    both phases.  A point moves with the water velocity ``v`` and carries a
+    constant water mass ``m``, a variable sediment mass ``ms``, the water mass
+    concentration ``afrf`` (= alpha_f * rho_f), the sediment volumetric
+    concentration ``alpha_s`` and the sediment velocity ``vs``.
+    """
+    particleID: int
+    bodyID: ti.u8
+    materialID: ti.u8
+    active: ti.u8
+    m: float                        # water mass, constant, Eq. (4.56)
+    ms: float                       # sediment mass, Eq. (4.67)
+    vol: float
+    afrf: float                     # alpha_f * rho_f, Eq. (4.66)
+    alpha_s: float                  # sediment volumetric concentration
+    pressure: float                 # mixture pressure, Eq. (4.77)
+    x: vec2f
+    v: vec2f                        # water velocity u_f
+    vs: vec2f                       # sediment velocity u_s
+    stress: vec6f
+    velocity_gradient: mat2x2       # water velocity gradient
+    sediment_velocity_gradient: mat2x2
+    fix_v: vec2u8
+
+    @ti.func
+    def _restart(self, bodyID, materialID, active, mass, position, velocity, volume, stress, velocity_gradient, fix_v):
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.active = ti.u8(active)
+        self.m = float(mass)
+        self.x = float(position)
+        self.v = float(velocity)
+        self.vs = float(velocity)
+        self.vol = float(volume)
+        self.stress = float(stress)
+        self.velocity_gradient = float(velocity_gradient)
+        self.fix_v = ti.cast(fix_v, ti.u8)
+
+    @ti.func
+    def _set_essential(self, particleID, bodyID, materialID, densityf, densitys, concentration, particle_volume, position, init_v, fix_v):
+        self.particleID = particleID
+        self.active = ti.u8(1)
+        self.bodyID = ti.u8(bodyID)
+        self.materialID = ti.u8(materialID)
+        self.vol = float(particle_volume)
+        self.alpha_s = float(concentration)
+        self.afrf = float((1. - concentration) * densityf)
+        self.m = self.afrf * self.vol
+        self.ms = self.alpha_s * densitys * self.vol
+        self.pressure = 0.
+        self.x = float(position)
+        self.v = init_v
+        self.vs = init_v
+        self.fix_v = fix_v
+
+    @ti.func
+    def _set_concentration(self, densityf, densitys, concentration):
+        self.alpha_s = float(concentration)
+        self.afrf = float((1. - concentration) * densityf)
+        self.m = self.afrf * self.vol
+        self.ms = self.alpha_s * densitys * self.vol
+
+    @ti.func
+    def _add_gravity_field(self, gamma):
+        # the hydrostatic pressure is stored and later inverted into a density
+        # and a volume through the mixture equation of state, see Eqs. (4.70)-(4.77)
+        self.pressure += -float(gamma[1, 1])
+
+    @ti.func
+    def _update_stress(self, stress):
+        self.stress += stress
+
+    @ti.func
+    def _get_mean_stress(self):
+        return 1. / 3. * (self.stress[0] + self.stress[1] + self.stress[2])
+
+    @ti.func
+    def _compute_external_force(self, gravity):
+        return self.m * vec2f(gravity[0], gravity[1])
+
+    @ti.func
+    def _compute_internal_force(self):
+        return -self.vol * self.stress
+
+    @ti.func
+    def _update_particle_state(self, dt, alpha, vPIC, vFLIP):
+        v0 = self.v
+        flag1 = int(self.fix_v)
+        flag2 = Zero2OneVector(flag1)
+        self.v = (alpha * vPIC + (1 - alpha) * (vFLIP * dt[None] + v0)) * flag2 + v0 * flag1
+        self.x += vPIC * dt[None] * flag2 + v0 * dt[None] * flag1
+        if ti.static(GlobalVariable.MPMXPBC):
+            self.x[0] -= ti.floor(self.x[0] / GlobalVariable.MPMXSIZE) * GlobalVariable.MPMXSIZE
+        if ti.static(GlobalVariable.MPMYPBC):
+            self.x[1] -= ti.floor(self.x[1] / GlobalVariable.MPMYSIZE) * GlobalVariable.MPMYSIZE
+
+    @ti.func
+    def _update_rigid_body(self, dt):
+        self.x += self.v * dt[None]
+
+    @ti.func
+    def _compute_particle_velocity(self, xg):
+        return self.v - self.velocity_gradient @ (self.x - xg)
+
+
+@ti.dataclass
 class ParticleCloud2DAxisy:  # memory usage: 108B
     particleID: int
     bodyID: ti.u8

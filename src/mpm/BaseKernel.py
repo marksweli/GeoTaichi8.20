@@ -108,6 +108,13 @@ def modify_particle_materialID_in_region(value: int, particleNum: int, particle:
 
 
 @ti.kernel
+def modify_particle_concentration_in_region(value: float, densityf: float, densitys: float, particleNum: int, particle: ti.template(), is_in_region: ti.template()):
+    for np in range(particleNum):
+        if is_in_region(particle[np].x):
+            particle[np]._set_concentration(densityf, densitys, value)
+
+
+@ti.kernel
 def modify_particle_position_in_region_2D(factor: int, value: ti.types.vector(2, float), particleNum: int, particle: ti.template(), is_in_region: ti.template()):
     for np in range(particleNum):
         if is_in_region(particle[np].x):

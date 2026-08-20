@@ -5,6 +5,7 @@ from taichi.lang.impl import current_cfg
 from src.mpm.SpatialHashGrid import SpatialHashGrid
 from src.mpm.engines.ULExplicitEngine import ULExplicitEngine
 from src.mpm.engines.ULExplicitTwoPhaseEngine import ULExplicitTwoPhaseEngine
+from src.mpm.engines.ULExplicitTwoFluidEngine import ULExplicitTwoFluidEngine
 from src.mpm.engines.TLExplicitEngine import TLExplicitEngine
 from src.mpm.engines.ULImplicitEngine import ImplicitEngine
 from src.mpm.GenerateManager import GenerateManager
@@ -249,6 +250,8 @@ class MPM(object):
                 if self.sims.solver_type == "Explicit":
                     if self.sims.material_type == "TwoPhaseSingleLayer":
                         self.enginer = ULExplicitTwoPhaseEngine(self.sims)
+                    elif self.sims.material_type == "TwoFluidSediment":
+                        self.enginer = ULExplicitTwoFluidEngine(self.sims)
                     else:
                         self.enginer = ULExplicitEngine(self.sims)
                 elif self.sims.solver_type == "Implicit":

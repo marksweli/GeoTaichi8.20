@@ -35,9 +35,11 @@ def main():
         material_type='TwoFluidSediment', velocity_projection='PIC/FLIP')
     # A FLIP dominated projection is mandatory here: with pure PIC the numerical dissipation of
     # the grid transfer removes the slip between the two phases and the cloud stops settling.
-    # The time step is limited by the sediment viscosity of Eq. (4.32), which at alpha_s = 0.606
-    # is already of the order of 1 m^2/s, so that dt <~ 0.125 h^2 / nu_s.
-    mpm.set_solver({'Timestep': 4e-6, 'SimulationTime': 1.0, 'SaveInterval': 0.02,
+    # The time step is now controlled by the acoustic CFL condition only, dt <~ 0.3 h / c_mix
+    # with c_mix ~ 37 m/s: the stiff water-sediment drag is relaxed implicitly on the grid and
+    # the viscosities are bounded by the explicit diffusion limit 0.125 h^2 / dt, so the
+    # sediment viscosity of Eq. (4.32) (~1 m^2/s at alpha_s = 0.606) no longer restricts it.
+    mpm.set_solver({'Timestep': 4e-5, 'SimulationTime': 1.0, 'SaveInterval': 0.02,
                     'SavePath': 'mud_twofluid_08C1'})
     mpm.memory_allocate(memory={'max_material_number': 2, 'max_particle_number': 400000,
         'verlet_distance_multiplier': 1., 'max_constraint_number': {'max_reflection_constraint': 400000}})

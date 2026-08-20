@@ -52,7 +52,8 @@ class ULExplicitTwoFluidEngine(ULExplicitEngine):
             end_index = scene.material.mapping[materialID + 1]
             kernel_twofluid_force_p2g(scene.element.grid_nodes, start_index, end_index, sims.gravity, scene.node, scene.particle,
                                       scene.material.materialID, scene.material.matProps[materialID + 1],
-                                      scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size)
+                                      scene.element.LnID, scene.element.shape_fn, scene.element.dshape_fn, scene.element.node_size,
+                                      sims.dt)
 
     def compute_grid_kinematic(self, sims: Simulation, scene: myScene):
         kernel_twofluid_grid_kinematic(scene.mass_cut_off, sims.background_damping, scene.node, sims.dt)

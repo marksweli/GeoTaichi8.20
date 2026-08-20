@@ -178,6 +178,24 @@ class TwoFluidSedimentModel(Fluid):
         return lamda_d * 0.75 * drag_coefficient * self.density / self.particle_diameter * relative_velocity_norm
 
     @ti.func
+    def _stable_viscosity(self, viscosity, dt):
+        """Bound a kinematic viscosity by the explicit diffusion stability limit.
+
+        An explicit update of the viscous term is stable only if the diffusion number
+        nu dt / Delta^2 stays below 1 / (2 d) = 0.25 in two dimensions; a safety factor of
+        one half is used here.  The Ahilan & Sleath viscosity of Eq. (4.32) diverges at the
+        packing limit and would otherwise dictate a time step of a few microseconds, while
+        the momentum it diffuses over one step is already far larger than the cell.  Capping
+        it therefore only affects the densest material points, where the viscous stress is
+        anyway not resolved, and leaves the dilute cloud (alpha_s <~ 0.1, nu_s <~ 1e-3 m^2/s)
+        untouched.
+        """
+        limit = viscosity
+        if self.element_length > 0. and dt > 0.:
+            limit = 0.125 * self.element_length * self.element_length / dt
+        return ti.min(viscosity, limit)
+
+    @ti.func
     def _deviatoric_free_stress2D(self, velocity_gradient, viscosity):
         """tau*_ij / rho = nu (du_i/dx_j + du_j/dx_i), Eq. (4.50)."""
         stress = ZEROMAT2x2

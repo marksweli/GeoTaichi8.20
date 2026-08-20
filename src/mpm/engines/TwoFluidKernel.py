@@ -79,8 +79,10 @@ def kernel_twofluid_grid_velocity(cutoff: float, node: ti.template()):
 @ti.kernel
 def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int, gravity: ti.types.vector(3, float),
                               node: ti.template(), particle: ti.template(), materialID: ti.template(), matProps: ti.template(),
-                              LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(), node_size: ti.template()):
+                              LnID: ti.template(), shapefn: ti.template(), dshapefn: ti.template(), node_size: ti.template(),
+                              dt: ti.template()):
     gravity2D = vec2f(gravity[0], gravity[1])
+    dtime = dt[None]
     for i in range(start_index, end_index):
         np = materialID[i]
         if int(particle[np].active) == 1:
@@ -107,16 +109,23 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
             water_strain_rate = matProps._strain_rate_norm2D(velocity_gradient)
             sediment_strain_rate = matProps._strain_rate_norm2D(sediment_gradient)
             eddy_viscosity = matProps._eddy_viscosity(water_strain_rate, alpha_s)
-            water_viscosity = matProps.water_viscosity + eddy_viscosity
-            sediment_viscosity = matProps._sediment_viscosity(alpha_s) + matProps._eddy_viscosity(sediment_strain_rate, alpha_s)
+            water_viscosity = matProps._stable_viscosity(matProps.water_viscosity + eddy_viscosity, dtime)
+            sediment_viscosity = matProps._stable_viscosity(
+                matProps._sediment_viscosity(alpha_s) + matProps._eddy_viscosity(sediment_strain_rate, alpha_s), dtime)
             water_stress = matProps._deviatoric_free_stress2D(velocity_gradient, water_viscosity)
             sediment_stress = matProps._deviatoric_free_stress2D(sediment_gradient, sediment_viscosity)
             diffusivity = eddy_viscosity / matProps.schmidt
 
             relative_velocity = particle[np].v - particle[np].vs
             drag = matProps._drag_factor(relative_velocity.norm(), alpha_s)
-            # momentum exchange per unit mixture volume, Eq. (4.52)
-            exchange = -drag * alpha_s * relative_velocity + drag * (diffusivity / alpha_f) * grad_alpha
+            # Momentum exchange per unit mixture volume, Eq. (4.52).  Only the turbulent drift
+            # part gamma D/alpha_f grad(alpha_s) is assembled explicitly; the drag proper
+            # -gamma alpha_s (u_f - u_s) is a stiff relaxation whose rate gamma alpha_s
+            # (1/(alpha_f rho_f) + 1/(alpha_s rho_s)) reaches several 10^3 s^-1 in the dense
+            # cloud, so it is integrated implicitly on the grid, see
+            # kernel_twofluid_grid_kinematic, which removes it from the time step restriction.
+            drift = drag * (diffusivity / alpha_f) * grad_alpha
+            drag_coefficient = volume * drag * alpha_s
 
             mixture_density = afrf + asrs
             pressure += matProps._artificial_pressure(mixture_density, velocity_gradient.trace())
@@ -131,8 +140,8 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
             # near a sharp concentration front produces spurious forces of the order of p/Delta.
             mixture_pressure = volume * pressure
 
-            water_body = particle[np].m * gravity2D + volume * exchange
-            sediment_body = particle[np].ms * gravity2D - volume * exchange
+            water_body = particle[np].m * gravity2D + volume * drift
+            sediment_body = particle[np].ms * gravity2D - volume * drift
             # Eq. (4.67): weak form of the drift flux alpha_s rho_s (u_s - u_f).  Assembling the
             # sediment mass rate on the grid and redistributing it with the same weights makes the
             # concentration transport discretely conservative, because sum_I grad(N_I) vanishes.
@@ -151,6 +160,7 @@ def kernel_twofluid_force_p2g(total_nodes: int, start_index: int, end_index: int
                 node[nodeID, bodyID].force += water_force
                 node[nodeID, bodyID].forces += sediment_force
                 node[nodeID, bodyID].pforce += mixture_pressure * dshape_fn
+                node[nodeID, bodyID].drag += shape_fn * drag_coefficient
                 node[nodeID, bodyID].dms += sediment_flux.dot(dshape_fn)
 
 
@@ -161,16 +171,28 @@ def kernel_twofluid_grid_kinematic(cutoff: float, damp: float, node: ti.template
             concentration = ti.min(ti.max(node[ng, nb].alpha_s, 0.), 1.)
             node[ng, nb].force += (1. - concentration) * node[ng, nb].pforce
             node[ng, nb].forces += concentration * node[ng, nb].pforce
-            acceleration = node[ng, nb].force / node[ng, nb].m
-            node[ng, nb].momentum += acceleration * dt[None]
-            node[ng, nb].force = acceleration
+            water_velocity = node[ng, nb].momentum
+            sediment_velocity = node[ng, nb].momentums
+            velocity = water_velocity + node[ng, nb].force / node[ng, nb].m * dt[None]
+            velocitys = sediment_velocity
             if node[ng, nb].ms > cutoff:
-                acceleration_s = node[ng, nb].forces / node[ng, nb].ms
-                node[ng, nb].momentums += acceleration_s * dt[None]
-                node[ng, nb].forces = acceleration_s
+                velocitys += node[ng, nb].forces / node[ng, nb].ms * dt[None]
+                # implicit relaxation of the drag of Eq. (4.52): the impulse is evaluated with
+                # the end-of-step slip, r^{n+1} = r* / (1 + dt K (1/m_f + 1/m_s)), which is
+                # unconditionally stable and exchanges momentum exactly between the phases
+                mobility = 1. / node[ng, nb].m + 1. / node[ng, nb].ms
+                impulse = dt[None] * node[ng, nb].drag / (1. + dt[None] * node[ng, nb].drag * mobility) * \
+                    (velocity - velocitys)
+                velocity -= impulse / node[ng, nb].m
+                velocitys += impulse / node[ng, nb].ms
             else:
-                node[ng, nb].momentums = node[ng, nb].momentum
-                node[ng, nb].forces = acceleration
+                velocitys = velocity
+            # the accelerations handed to the FLIP update are the total ones, so that the
+            # implicit drag impulse is felt by the material points as well
+            node[ng, nb].momentum = velocity
+            node[ng, nb].force = (velocity - water_velocity) / dt[None]
+            node[ng, nb].momentums = velocitys
+            node[ng, nb].forces = (velocitys - sediment_velocity) / dt[None]
 
 
 # ========================================================= #
